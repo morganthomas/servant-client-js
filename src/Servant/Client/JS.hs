@@ -5,7 +5,9 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PackageImports             #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeSynonymInstances       #-}
 {-# LANGUAGE ViewPatterns               #-}
 
@@ -25,6 +27,7 @@ import Control.Concurrent
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Error.Class
+import Control.Monad.Morph
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Control.Monad.Trans.Except
@@ -56,6 +59,7 @@ import JavaScript.TypedArray.ArrayBuffer
 import JavaScript.Web.Location
 import Network.HTTP.Media (renderHeader)
 import Network.HTTP.Types
+import Servant.API (SourceIO)
 import Servant.Client.Core
 import Servant.Client.Core.Reexport
 import qualified Servant.Types.SourceT as S
@@ -119,11 +123,26 @@ instance RunStreamingClient ClientM where
 -- Streaming request implementation
 --
 
+-- TODO close response & kill thread
 withStreamingRequestJSM :: Request -> (StreamingResponse -> JSM a) -> ClientM a
-withStreamingRequestJSM = withStreamingRequestJSM -- TODO
+withStreamingRequestJSM (Request _reqPath _reqQs _reqBody _reqAccept _reqHdrs _reqVer _reqMethod) handler = ClientM . ReaderT $ \base -> do
+  push <- liftIO newEmptyMVar
+  pushTid <- liftIO . forkIO $ do
+    error "todo"
+  (status, hdrs, ver) <- error "todo"
+  let out :: forall b. (S.StepT IO BS.ByteString -> IO b) -> IO b 
+      out handler' = handler' .  S.Effect . fix $ \go -> do
+        next <- takeMVar push
+        case next of
+          Nothing -> do
+            killThread pushTid
+            return S.Stop
+          Just x -> return $ S.Yield x (S.Effect go)
+  liftJSM . handler . Response status hdrs ver $ S.SourceT @IO out
 
 --
 -- XHR implementation
+-- TODO rewrite in jsaddle
 --
 
 performRequest :: Request -> ClientM Response

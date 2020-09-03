@@ -27,6 +27,7 @@ library
    , http-media
    , http-types
    , jsaddle
+   , mmorph
    , monad-control
    , mtl
    , semigroupoids
