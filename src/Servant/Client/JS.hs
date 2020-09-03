@@ -53,14 +53,14 @@ import GHC.Generics
 import qualified GHCJS.Buffer as Buffer
 import GHCJS.Foreign.Callback
 #ifdef ghcjs_HOST_OS
-import GHCJS.Prim
+import GHCJS.Prim hiding (getProp, fromJSString)
 import GHCJS.Types
 #else
-import "jsaddle" GHCJS.Prim
+import "jsaddle" GHCJS.Prim hiding (fromJSString)
 import "jsaddle" GHCJS.Types
 import Language.Javascript.JSaddle.Types (GHCJSPure)
 #endif 
-import Language.Javascript.JSaddle (JSM, liftJSM, MonadJSM, jsg, toJSVal, obj, (#), (<#), fun, fromJSVal, (!), listProps, getProp, JSString (..), makeObject, isTruthy)
+import Language.Javascript.JSaddle (JSM, liftJSM, MonadJSM, jsg, toJSVal, obj, (#), (<#), fun, fromJSVal, (!), listProps, getProp, JSString (..), makeObject, isTruthy, FromJSString (..))
 import JavaScript.TypedArray.ArrayBuffer
 import JavaScript.Web.Location
 import Network.HTTP.Media (renderHeader)
@@ -131,6 +131,14 @@ instance RunStreamingClient ClientM where
 -- Streaming request implementation
 --
 
+#ifdef ghcjs_HOST_OS
+unJSString :: JSString -> Text
+unJSString = fromJSString
+#else
+unJSString :: JSString -> Text
+unJSString (JSString s) = s
+#endif
+
 withStreamingRequestJSM :: Request -> (StreamingResponse -> JSM a) -> ClientM a
 withStreamingRequestJSM req@(Request reqPath reqQs reqBody reqAccept reqHdrs _reqVer reqMethod) handler =
   ClientM . ReaderT $ \(ClientEnv (BaseUrl urlScheme host port basePath)) -> do
@@ -179,10 +187,10 @@ withStreamingRequestJSM req@(Request reqPath reqQs reqBody reqAccept reqHdrs _re
             <$> (liftJSM $ (fromJSVal =<< res ! ("status" :: Text)))
           resHeadersObj <- makeObject =<< res ! ("headers" :: Text)
           resHeaderNames <- liftJSM $ listProps resHeadersObj
-          resHeaders <- forM resHeaderNames $ \headerName@(JSString s) -> do
+          resHeaders <- forM resHeaderNames $ \headerName -> do
             headerValue <- fmap (fromMaybe "") . liftJSM . fromJSVal 
                            =<< liftJSM (getProp headerName resHeadersObj)
-            return (mk (encodeUtf8 s), encodeUtf8 headerValue)
+            return (mk (encodeUtf8 (unJSString headerName)), encodeUtf8 headerValue)
           rdr <- liftJSM $ res # ("getReader" :: Text) $ ([] :: [JSVal])
           _ <- fix $ \go -> do
             rdrPromise <- liftJSM $ rdr # ("read" :: Text) $ ([] :: [JSVal])
@@ -401,10 +409,10 @@ toResponse xhr = do
   status <- liftIO $ getStatus xhr
   case status of
     0 -> throwError $ ConnectionError (SomeException (userError "connection error"))
-    _ -> liftIO $ do
-      statusText <- cs <$> getStatusText xhr
-      headers <- parseHeaders <$> getAllResponseHeaders xhr
-      response <- getResponse xhr
+    _ -> do
+      statusText <- liftJSM $ cs . fromMaybe "" <$> (fromJSVal =<< liftIO (getStatusText xhr))
+      headers <- liftJSM $ parseHeaders <$> getAllResponseHeaders xhr
+      response <- liftIO $ getResponse xhr
       pure Response
         { responseStatusCode = mkStatus status statusText
         , responseBody = response
@@ -419,8 +427,8 @@ foreign import javascript unsafe "$1.status"
 getStatus = getStatus
 #endif
 
-getStatusText :: JSXMLHttpRequest -> IO String
-getStatusText = fmap (fakeGhcjsPure . fromJSString) . js_statusText
+getStatusText :: JSXMLHttpRequest -> IO JSVal
+getStatusText = js_statusText
 
 #ifdef ghcjs_HOST_OS
 foreign import javascript unsafe "$1.statusText"
@@ -429,9 +437,8 @@ foreign import javascript unsafe "$1.statusText"
 js_statusText = js_statusText
 #endif
 
-getAllResponseHeaders :: JSXMLHttpRequest -> IO String
-getAllResponseHeaders xhr =
-  fakeGhcjsPure . fromJSString <$> js_getAllResponseHeaders xhr
+getAllResponseHeaders :: JSXMLHttpRequest -> JSM String
+getAllResponseHeaders xhr = fromMaybe "" <$> (fromJSVal =<< js_getAllResponseHeaders xhr)
 
 #ifdef ghcjs_HOST_OS
 foreign import javascript unsafe "$1.getAllResponseHeaders()"
