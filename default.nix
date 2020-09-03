@@ -20,13 +20,6 @@ let
   };
 
 
-  ghcjs-base-stub-src = builtins.fetchGit {
-    url = https://github.com/morganthomas/ghcjs-base-stub.git;
-    rev = "17472917f078d60f411bfb464da2599600ffbcb2";
-    ref = "nix";
-  };
-
-
   # Additional ignore patterns to keep the Nix src clean
   ignorance = [
     "*.md"
@@ -58,7 +51,6 @@ let
   # Haskell specific overlay (for you to extend)
   haskell-overlay = hself: hsuper: with pkgs.haskell.lib; { 
     "happy" = pkgs.haskell.lib.dontCheck hsuper.happy;
-    ghcjs-base-stub = hsuper.callCabal2nix "ghcjs-base-stub" ghcjs-base-stub-src {};
   };
 
 
