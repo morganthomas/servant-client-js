@@ -12,6 +12,10 @@
 
 module Servant.Client.JS
   ( module Servant.Client.Core.Reexport
+  , ClientEnv
+  , ClientM
+  , client
+  , withStreamingRequestJSM
   ) where
 
 
@@ -103,6 +107,20 @@ instance Alt ClientM where
 instance RunClient ClientM where
   runRequest = performRequest
   throwClientError = throwError
+
+instance RunStreamingClient ClientM where
+  withStreamingRequest req handler = withStreamingRequestJSM req (liftIO . handler)
+
+--
+-- Streaming request implementation
+--
+
+withStreamingRequestJSM :: Request -> (StreamingResponse -> JSM a) -> ClientM a
+withStreamingRequestJSM = withStreamingRequestJSM -- TODO
+
+--
+-- XHR implementation
+--
 
 performRequest :: Request -> ClientM Response
 performRequest req = do
