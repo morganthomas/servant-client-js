@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PackageImports             #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeSynonymInstances       #-}
 {-# LANGUAGE ViewPatterns               #-}
 
 
@@ -40,15 +41,14 @@ import GHCJS.Foreign.Callback
 #ifdef ghcjs_HOST_OS
 import GHCJS.Prim
 import GHCJS.Types
+import Language.Javascript.JSaddle.Types (JSM, liftJSM, MonadJSM)
 #else
 import "jsaddle" GHCJS.Prim
 import "jsaddle" GHCJS.Types
+import Language.Javascript.JSaddle.Types (GHCJSPure, JSM, liftJSM, MonadJSM)
 #endif
 import JavaScript.TypedArray.ArrayBuffer
 import JavaScript.Web.Location
-#ifndef ghcjs_HOST_OS
-import Language.Javascript.JSaddle.Types (GHCJSPure)
-#endif
 import Network.HTTP.Media (renderHeader)
 import Network.HTTP.Types
 import Servant.Client.Core
@@ -64,18 +64,33 @@ newtype ClientEnv = ClientEnv { baseUrl :: BaseUrl }
   deriving (Eq, Show)
 
 newtype ClientM a = ClientM
-  { runClientM' :: ReaderT ClientEnv (ExceptT ClientError IO) a }
-  deriving ( Functor, Applicative, Monad, MonadIO, Generic
-           , MonadReader ClientEnv, MonadError ClientError, MonadThrow
-           , MonadCatch )
+  { runClientM' :: ReaderT ClientEnv (ExceptT ClientError JSM) a }
+  deriving ( Functor, Applicative, Monad, MonadIO
+#ifndef ghcjs_HOST_OS
+           , MonadJSM
+#endif
+           , Generic, MonadReader ClientEnv, MonadError ClientError
+           , MonadThrow, MonadCatch )
 
 client :: HasClient ClientM api => Proxy api -> Client ClientM api
 client api = api `clientIn` (Proxy :: Proxy ClientM)
 
-instance MonadBase IO ClientM where
+#ifndef ghcjs_HOST_OS
+instance MonadBase JSM JSM where
+  liftBase = id
+#endif
+
+instance MonadBase JSM ClientM where
   liftBase = ClientM . liftBase
 
-instance MonadBaseControl IO ClientM where
+#ifndef ghcjs_HOST_OS
+instance MonadBaseControl JSM JSM where
+  type StM JSM a = a
+  liftBaseWith f = f id
+  restoreM = return
+#endif
+
+instance MonadBaseControl JSM ClientM where
   type StM ClientM a = Either ClientError a
 
   liftBaseWith f = ClientM (liftBaseWith (\g -> f (g . runClientM')))
@@ -91,9 +106,9 @@ instance RunClient ClientM where
 
 performRequest :: Request -> ClientM Response
 performRequest req = do
-  xhr <- liftIO initXhr
+  xhr <- liftJSM initXhr
   burl <- asks baseUrl
-  liftIO $ performXhr xhr burl req
+  liftJSM $ performXhr xhr burl req
   resp <- toResponse xhr
 
   let status = statusCode (responseStatusCode resp)
@@ -103,7 +118,7 @@ performRequest req = do
 
   pure resp
 
-initXhr :: IO JSXMLHttpRequest
+initXhr :: JSM JSXMLHttpRequest
 initXhr = do
   lib <- requireXMLHttpRequestClass
   newXMLHttpRequest lib
@@ -119,10 +134,10 @@ requireXMLHttpRequestClass = requireXMLHttpRequestClass
 newXMLHttpRequest = newXMLHttpRequest
 #endif
 
-performXhr :: JSXMLHttpRequest -> BaseUrl -> Request -> IO ()
-performXhr xhr burl request = do
+performXhr :: JSXMLHttpRequest -> BaseUrl -> Request -> JSM ()
+performXhr xhr burl request = liftIO $ do
 
-  waiter <- newEmptyMVar
+  waiter <- liftIO newEmptyMVar
 
   bracket (acquire waiter) releaseCallback $ \_callback -> do
         t <- myThreadId
