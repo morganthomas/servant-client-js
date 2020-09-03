@@ -12,8 +12,9 @@
 
 module Servant.Client.JS
   ( module Servant.Client.Core.Reexport
-  , ClientEnv
-  , ClientM
+  , ClientEnv (..)
+  , ClientM (..)
+  , runClientM
   , client
   , withStreamingRequestJSM
   ) where
@@ -78,6 +79,9 @@ newtype ClientM a = ClientM
 
 client :: HasClient ClientM api => Proxy api -> Client ClientM api
 client api = api `clientIn` (Proxy :: Proxy ClientM)
+
+runClientM :: ClientM a -> ClientEnv -> JSM (Either ClientError a)
+runClientM m env = runExceptT $ runReaderT (runClientM' m) env
 
 #ifndef ghcjs_HOST_OS
 instance MonadBase JSM JSM where
