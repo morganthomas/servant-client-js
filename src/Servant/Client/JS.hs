@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeSynonymInstances       #-}
 {-# LANGUAGE ViewPatterns               #-}
 {-# OPTIONS_GHC -Wunused-imports        #-}
+{-# OPTIONS_GHC -Wincomplete-patterns   #-}
 
 
 -- TODO: make this safe for binary / non-UTF8
@@ -169,6 +170,7 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
       mt' <- liftJSM $ toJSVal (decodeUtf8 (renderHeader mt))
       liftJSM $ headers <# "Content-Type" $ mt'
     Just (RequestBodySource _, _) -> error "Servant.Client.JS.withStreamingRequest(JSM) does not (yet) support RequestBodySource"
+    Nothing -> return ()
   init' <- liftJSM $ toJSVal init
   return [url, init']
 
@@ -221,9 +223,11 @@ fetch req = ClientM . ReaderT $ \env -> do
                   Just x -> do
                     liftIO . atomically $ writeTVar contents . (<> x) =<< readTVar contents
                     go
+              _ -> error "fetch read promise handler received wrong number of arguments"
           _ <- rdrPromise # ("then" :: Text) $ [rdrHandler]
           return ()
         return ()
+      _ -> error "fetch promise handler received wrong number of arguments"
   ((status, hdrs, ver), body) <- liftIO $ takeMVar result
   return $ Response status hdrs ver (BL.fromStrict body)
 
