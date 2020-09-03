@@ -141,9 +141,9 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
       schemeStr = case urlScheme of
                     Http -> "http://"
                     Https -> "https://"
-  url <- toJSVal $ schemeStr <> pack host <> pack (show port) <> pack basePath
+  url <- toJSVal $ schemeStr <> pack host <> ":" <> pack (show port) <> pack basePath
                              <> decodeUtf8 (BL.toStrict (toLazyByteString reqPath))
-                             <> "?" <> (intercalate "&" 
+                             <> (if Prelude.null reqQs then "" else "?" ) <> (intercalate "&" 
                                         $ (\(k,v) -> decodeUtf8 k <> "="
                                                            <> maybe "" decodeUtf8 v)
                                          <$> Prelude.foldr (:) [] reqQs)
