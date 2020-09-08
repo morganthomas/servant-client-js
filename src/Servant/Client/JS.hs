@@ -259,7 +259,6 @@ fetch req = ClientM . ReaderT $ \env -> do
       _ -> error "fetch promise handler received wrong number of arguments"
   liftJSM $ promise # ("then" :: Text) $ [promiseHandler]
   ((status, hdrs, ver), body) <- liftIO $ takeMVar result
-  liftIO . putStrLn . unpack . ("RESULT " <> ) $ decodeUtf8 body
   return $ Response status hdrs ver (BL.fromStrict body)
 
 
@@ -275,9 +274,10 @@ withStreamingRequestJSM req handler =
       case args of
         [res] -> do
           (status, hdrs, ver) <- getResponseMeta res
-          rdr <- liftJSM $ res # ("getReader" :: Text) $ ([] :: [JSVal])
+          stream <- res ! ("body" :: Text)
+          rdr <- stream # ("getReader" :: Text) $ ([] :: [JSVal])
           _ <- fix $ \go -> do
-            rdrPromise <- liftJSM $ rdr # ("read" :: Text) $ ([] :: [JSVal])
+            rdrPromise <- rdr # ("read" :: Text) $ ([] :: [JSVal])
             rdrHandler <- toJSVal . fun $ \_ _ args ->
               case args of
                 [chunk] -> do
@@ -288,7 +288,7 @@ withStreamingRequestJSM req handler =
                       go
                     Nothing -> liftIO $ putMVar push Nothing
                 _ -> error "wrong number of arguments to rdrHandler"
-            _ <- liftJSM $ rdrPromise # ("then" :: Text) $ [rdrHandler]
+            _ <- rdrPromise # ("then" :: Text) $ [rdrHandler]
             return ()
           let out :: forall b. (S.StepT IO BS.ByteString -> IO b) -> IO b 
               out handler' = handler' .  S.Effect . fix $ \go -> do
