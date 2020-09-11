@@ -7,10 +7,12 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PackageImports             #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeSynonymInstances       #-}
+{-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE ViewPatterns               #-}
 {-# OPTIONS_GHC -Wunused-imports        #-}
 {-# OPTIONS_GHC -Wincomplete-patterns   #-}
@@ -60,7 +62,7 @@ import Language.Javascript.JSaddle (
 #ifndef ghcjs_HOST_OS
   MonadJSM,
 #endif
-  JSM, liftJSM, jsg, toJSVal, obj, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
+  JSM (..), liftJSM, jsg, toJSVal, obj, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
 import Network.HTTP.Media (renderHeader)
 import Network.HTTP.Types
 import Servant.Client.Core
@@ -92,22 +94,13 @@ client api = api `clientIn` (Proxy :: Proxy ClientM)
 runClientM :: ClientM a -> ClientEnv -> JSM (Either ClientError a)
 runClientM m env = runExceptT $ runReaderT (runClientM' m) env
 
-#ifndef ghcjs_HOST_OS
-instance MonadBase JSM JSM where
-  liftBase = id
-#endif
+deriving instance MonadBase IO JSM
+deriving instance MonadBaseControl IO JSM
 
-instance MonadBase JSM ClientM where
+instance MonadBase IO ClientM where
   liftBase = ClientM . liftBase
 
-#ifndef ghcjs_HOST_OS
-instance MonadBaseControl JSM JSM where
-  type StM JSM a = a
-  liftBaseWith f = f id
-  restoreM = return
-#endif
-
-instance MonadBaseControl JSM ClientM where
+instance MonadBaseControl IO ClientM where
   type StM ClientM a = Either ClientError a
 
   liftBaseWith f = ClientM (liftBaseWith (\g -> f (g . runClientM')))
