@@ -133,7 +133,7 @@ unJSString (JSString s) = s
 getFetchArgs :: ClientEnv -> Request -> JSM [JSVal]
 getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
           (Request reqPath reqQs reqBody reqAccept reqHdrs _reqVer reqMethod) = do
-  window <- liftJSM $ jsg "window"
+  window <- jsg "window"
   let schemeStr :: Text
       schemeStr = case urlScheme of
                     Http -> "http://"
@@ -144,38 +144,38 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
                                         $ (\(k,v) -> decodeUtf8 k <> "="
                                                            <> maybe "" decodeUtf8 v)
                                          <$> Prelude.foldr (:) [] reqQs)
-  init <- liftJSM obj
-  methodStr <- liftJSM . toJSVal $ decodeUtf8 reqMethod
-  liftJSM $ init <# "method" $ methodStr
-  headers <- liftJSM obj
+  init <- obj
+  methodStr <- toJSVal $ decodeUtf8 reqMethod
+  init <# "method" $ methodStr
+  headers <- obj
   forM_  reqHdrs $ \(original -> k, v) -> do
-    v' <- liftJSM $ toJSVal (decodeUtf8 v)
-    liftJSM $ headers <# decodeUtf8 k $ v'
+    v' <- toJSVal (decodeUtf8 v)
+    headers <# decodeUtf8 k $ v'
   forM_ reqAccept $ \mt -> do
-    mt' <- liftJSM $ toJSVal (decodeUtf8 (renderHeader mt))
-    liftJSM $ headers <# "Accept" $ mt'
-  liftJSM $ init <# "headers" $ headers
+    mt' <- toJSVal (decodeUtf8 (renderHeader mt))
+    headers <# "Accept" $ mt'
+  init <# "headers" $ headers
   case reqBody of
     Just (RequestBodyLBS x, mt) -> do
-      v <- liftJSM $ toJSVal (decodeUtf8 (BL.toStrict x))
-      liftJSM $ init <# "body" $ v
-      mt' <- liftJSM $ toJSVal (decodeUtf8 (renderHeader mt))
-      liftJSM $ headers <# "Content-Type" $ mt'
+      v <- toJSVal (decodeUtf8 (BL.toStrict x))
+      init <# "body" $ v
+      mt' <- toJSVal (decodeUtf8 (renderHeader mt))
+      headers <# "Content-Type" $ mt'
     Just (RequestBodyBS x, mt) -> do
-      v <- liftJSM $ toJSVal (decodeUtf8 x)
-      liftJSM $ init <# "body" $ v
-      mt' <- liftJSM $ toJSVal (decodeUtf8 (renderHeader mt))
-      liftJSM $ headers <# "Content-Type" $ mt'
+      v <- toJSVal (decodeUtf8 x)
+      init <# "body" $ v
+      mt' <- toJSVal (decodeUtf8 (renderHeader mt))
+      headers <# "Content-Type" $ mt'
     Just (RequestBodySource _, _) -> error "Servant.Client.JS.withStreamingRequest(JSM) does not (yet) support RequestBodySource"
     Nothing -> return ()
-  init' <- liftJSM $ toJSVal init
+  init' <- toJSVal init
   return [url, init']
 
 
 getResponseMeta :: JSVal -> JSM (Status, Seq.Seq Header, HttpVersion)
 getResponseMeta res = do
   status <- toEnum . fromMaybe 200
-            <$> (liftJSM $ (fromJSVal =<< res ! ("status" :: Text)))
+            <$> (fromJSVal =<< res ! ("status" :: Text))
   resHeadersObj <- makeObject =<< res ! ("headers" :: Text)
   resHeaderNames <- (resHeadersObj # ("keys" :: Text) $ ([] :: [JSVal]))
     >>= fix (\go names ->
