@@ -39,7 +39,6 @@ import Control.Monad.Error.Class
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Control.Monad.Trans.Except
-import Control.Monad.Trans.Maybe
 import Data.Binary.Builder (toLazyByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as BL
@@ -52,6 +51,8 @@ import Data.Text
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import GHC.Conc
 import GHC.Generics
+import GHCJS.Buffer
+import GHCJS.Marshal.Internal
 #ifdef ghcjs_HOST_OS
 import GHCJS.Prim hiding (getProp, fromJSString)
 import Language.Javascript.JSaddle (fromJSString)
@@ -196,19 +197,11 @@ getResponseMeta res = do
   return (status, resHeaders, http11) -- http11 is made up
 
 
-uint8arrayToByteString :: JSVal -> JSM (Maybe BS.ByteString)
-uint8arrayToByteString x = runMaybeT $ do
-  vs <- liftJSM $ x # ("values" :: Text) $ ([] :: [JSVal])
-  words <- fix $ \go -> do
-    next <- liftJSM $ makeObject =<< (vs # ("next" :: Text) $ ([] :: [JSVal]))
-    isDone <- MaybeT $ fromJSVal =<< (next ! ("done" :: Text))
-    if isDone
-      then return []
-      else do
-        v <- MaybeT $ fmap toEnum <$> (fromJSVal =<< next ! ("value" :: Text))
-        rest <- go
-        return (v : rest)
-  return $ BS.pack words
+uint8arrayToByteString :: JSVal -> JSM BS.ByteString
+uint8arrayToByteString val = do
+  buf <- ghcjsPure (createFromArrayBuffer (pFromJSVal val)) >>= freeze
+  len <- ghcjsPure (byteLength buf)
+  ghcjsPure $ toByteString 0 (Just len) buf
 
 
 parseChunk :: JSVal -> JSM (Maybe BS.ByteString)
@@ -219,7 +212,7 @@ parseChunk chunk = do
               <$> (chunk ! ("done" :: Text))
   case isDone of
     True -> return Nothing
-    False -> uint8arrayToByteString =<< chunk ! ("value" :: Text)
+    False -> Just <$> (uint8arrayToByteString =<< chunk ! ("value" :: Text))
 
 
 fetch :: Request -> ClientM Response
