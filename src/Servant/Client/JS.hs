@@ -133,6 +133,7 @@ unJSString (JSString s) = s
 getFetchArgs :: ClientEnv -> Request -> JSM [JSVal]
 getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
           (Request reqPath reqQs reqBody reqAccept reqHdrs _reqVer reqMethod) = do
+  liftIO $ putStrLn "in getFetchArgs"
   window <- jsg "window"
   let schemeStr :: Text
       schemeStr = case urlScheme of
@@ -148,6 +149,7 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
   methodStr <- toJSVal $ decodeUtf8 reqMethod
   init <# "method" $ methodStr
   headers <- obj
+  liftIO $ putStrLn "populating headers"
   forM_  reqHdrs $ \(original -> k, v) -> do
     v' <- toJSVal (decodeUtf8 v)
     headers <# decodeUtf8 k $ v'
@@ -155,6 +157,7 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
     mt' <- toJSVal (decodeUtf8 (renderHeader mt))
     headers <# "Accept" $ mt'
   init <# "headers" $ headers
+  liftIO $ putStrLn "populated headers"
   case reqBody of
     Just (RequestBodyLBS x, mt) -> do
       v <- toJSVal (decodeUtf8 (BL.toStrict x))
@@ -218,9 +221,12 @@ parseChunk chunk = do
 
 fetch :: Request -> ClientM Response
 fetch req = ClientM . ReaderT $ \env -> do
+  liftIO $ putStrLn "in fetch"
   window <- liftJSM $ jsg ("window" :: Text)
   args <- liftJSM $ getFetchArgs env req
+  liftIO $ putStrLn "after getFetchArgs"
   promise <- liftJSM $ window # ("fetch" :: Text) $ args
+  liftIO $ putStrLn "after fetch"
   contents <- liftIO $ newTVarIO (mempty :: BS.ByteString)
   result <- liftIO newEmptyMVar
   promiseHandler <- liftJSM . toJSVal . fun $ \_ _ args -> do
@@ -247,6 +253,7 @@ fetch req = ClientM . ReaderT $ \env -> do
         return ()
       _ -> error "fetch promise handler received wrong number of arguments"
   liftJSM $ promise # ("then" :: Text) $ [promiseHandler]
+  liftIO $ putStrLn "after promise.then()"
   ((status, hdrs, ver), body) <- liftIO $ takeMVar result
   return $ Response status hdrs ver (BL.fromStrict body)
 
