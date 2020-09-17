@@ -199,8 +199,9 @@ getResponseMeta res = do
 
 uint8arrayToByteString :: JSVal -> JSM BS.ByteString
 uint8arrayToByteString val = do
-  buf <- ghcjsPure (createFromArrayBuffer (pFromJSVal val)) >>= freeze
-  len <- ghcjsPure (byteLength buf)
+  abuf <- val ! "buffer"
+  buf  <- ghcjsPure (createFromArrayBuffer (pFromJSVal val)) >>= freeze
+  len  <- ghcjsPure (byteLength buf)
   ghcjsPure $ toByteString 0 (Just len) buf
 
 
