@@ -133,7 +133,7 @@ unJSString (JSString s) = s
 getFetchArgs :: ClientEnv -> Request -> JSM [JSVal]
 getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
           (Request reqPath reqQs reqBody reqAccept reqHdrs _reqVer reqMethod) = do
-  window <- jsg "window"
+  self <- jsg "self"
   let schemeStr :: Text
       schemeStr = case urlScheme of
                     Http -> "http://"
@@ -218,9 +218,9 @@ parseChunk chunk = do
 
 fetch :: Request -> ClientM Response
 fetch req = ClientM . ReaderT $ \env -> do
-  window <- liftJSM $ jsg ("window" :: Text)
+  self <- liftJSM $ jsg ("self" :: Text)
   args <- liftJSM $ getFetchArgs env req
-  promise <- liftJSM $ window # ("fetch" :: Text) $ args
+  promise <- liftJSM $ self # ("fetch" :: Text) $ args
   contents <- liftIO $ newTVarIO (mempty :: BS.ByteString)
   result <- liftIO newEmptyMVar
   promiseHandler <- liftJSM . toJSVal . fun $ \_ _ args -> do
@@ -254,9 +254,9 @@ fetch req = ClientM . ReaderT $ \env -> do
 withStreamingRequestJSM :: Request -> (StreamingResponse -> JSM a) -> ClientM a
 withStreamingRequestJSM req handler =
   ClientM . ReaderT $ \env -> do
-    window <- liftJSM $ jsg "window"
+    self <- liftJSM $ jsg "self"
     fetchArgs <- liftJSM $ getFetchArgs env req
-    fetchPromise <- liftJSM $ window # "fetch" $ fetchArgs
+    fetchPromise <- liftJSM $ self # "fetch" $ fetchArgs
     push <- liftIO newEmptyMVar
     result <- liftIO newEmptyMVar
     fetchPromiseHandler <- liftJSM . toJSVal . fun $ \_ _ args ->
