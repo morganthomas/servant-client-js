@@ -207,8 +207,6 @@ uint8arrayToByteString val = do
 
 parseChunk :: JSVal -> JSM (Maybe BS.ByteString)
 parseChunk chunk = do
-  console <- jsg "console"
-  --console # ("log" :: Text) $ [chunk]
   isDone <- ghcjsPure =<< isTruthy
               <$> (chunk ! ("done" :: Text))
   case isDone of
