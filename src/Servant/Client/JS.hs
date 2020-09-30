@@ -70,10 +70,6 @@ import qualified Servant.Types.SourceT as S
 default (Text)
 
 
-newtype JSXMLHttpRequest = JSXMLHttpRequest JSVal
-
-newtype JSXMLHttpRequestClass = JSXMLHttpRequestClass JSVal
-
 newtype ClientEnv = ClientEnv { baseUrl :: BaseUrl }
   deriving (Eq, Show)
 
@@ -246,6 +242,9 @@ fetch req = ClientM . ReaderT $ \env -> do
   return $ Response status hdrs ver (BL.fromStrict body)
 
 
+-- | A variation on @Servant.Client.Core.withStreamingRequest@ where the continuation / callback
+--   passed as the second argument is in the JSM monad as opposed to the IO monad.
+--   Executes the given request and passes the response data stream to the provided continuation / callback.
 withStreamingRequestJSM :: Request -> (StreamingResponse -> JSM a) -> ClientM a
 withStreamingRequestJSM req handler =
   ClientM . ReaderT $ \env -> do

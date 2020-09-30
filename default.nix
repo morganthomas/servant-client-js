@@ -89,7 +89,7 @@ in with pkgs; with lib; with haskell.packages.${compiler};
     inherit withHoogle;
     packages = _: [servant-client-js];
     COMPILER = compilerjs;
-    buildInputs = [ stylish-haskell cabal-install ghcid ];
+    buildInputs = [ stylish-haskell cabal-install ghcid haddock ];
     shellHook = ''
       ${lolcat}/bin/lolcat ${./figlet}
     '';
