@@ -1,6 +1,6 @@
 # servant-client-js
 
-This is an experimental Servant client for frontend JavaScript. It serves the same purpose as [servant-client-ghcjs](https://github.com/haskell-servant/servant/tree/master/servant-client-ghcjs) and [servant-client-jsaddle](https://github.com/haskell-servant/servant/tree/master/servant-client-jsaddle). However, it has some significant differences. As compared to the official JavaScript Servant clients, servant-client-js:
+This is an experimental Servant client for frontend JavaScript. It serves the same purpose as [servant-client-ghcjs](https://github.com/haskell-servant/servant/tree/master/servant-client-ghcjs) and [servant-client-jsaddle](https://github.com/haskell-servant/servant/tree/master/servant-client-jsaddle). It is at least for most purposes able to serve as a drop-in replacement for either of those Servant clients. However, it has some significant differences. As compared to the official JavaScript Servant clients, servant-client-js:
 
 * supports streaming HTTP responses;
 * is a single code module with which works in both GHCJS and JSaddle;
