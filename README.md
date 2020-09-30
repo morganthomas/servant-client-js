@@ -22,7 +22,6 @@ or:
 ```
 servant-client-js]$ nix-shell
 [nix-shell]$ cabal repl
-
 ```
 
 ## Usage
