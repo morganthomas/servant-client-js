@@ -18,9 +18,6 @@
 {-# OPTIONS_GHC -Wincomplete-patterns   #-}
 
 
--- TODO: make this safe for binary / non-UTF8
-
-
 module Servant.Client.JS
   ( module Servant.Client.Core.Reexport
   , ClientEnv (..)
