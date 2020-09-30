@@ -8,4 +8,25 @@ This is an experimental Servant client for frontend JavaScript. It serves the sa
 * uses the JSaddle API and not the GHCJS FFI;
 * is less well-tested.
 
+## Building
+
+I recommend building servant-client-js using Nix:
+
+```
+servant-client-js]$ nix-build
+servant-client-js]$ nix-build --arg isJS true
+```
+
+or:
+
+```
+servant-client-js]$ nix-shell
+[nix-shell]$ cabal repl
+
+```
+
+## Usage
+
+Use servant-client-js in conjunction with Servant, as you would any other Servant client.
+
 Here is [a usage example](https://github.com/morganthomas/streaming-table-test).
