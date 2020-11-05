@@ -20,6 +20,10 @@
 
 module Servant.Client.JS
   ( module Servant.Client.Core.Reexport
+  , AbortController (..)
+  , abort
+  , newAbortController
+  , fetch
   , ClientEnv (..)
   , ClientM (..)
   , runClientM
