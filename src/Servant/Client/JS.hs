@@ -60,7 +60,7 @@ import Language.Javascript.JSaddle (
 #ifndef ghcjs_HOST_OS
   MonadJSM,
 #endif
-  JSM (..), liftJSM, jsg, toJSVal, obj, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
+  JSM (..), liftJSM, jsg, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
 import Network.HTTP.Media (renderHeader)
 import Network.HTTP.Types
 import Servant.Client.Core
@@ -107,11 +107,24 @@ instance Alt ClientM where
   a <!> b = a `catchError` const b
 
 instance RunClient ClientM where
-  runRequest = fetch
+  runRequest = fetch Nothing
   throwClientError = throwError
 
 instance RunStreamingClient ClientM where
-  withStreamingRequest req handler = withStreamingRequestJSM req (liftIO . handler)
+  withStreamingRequest req handler = withStreamingRequestJSM Nothing req (liftIO . handler)
+
+
+newtype AbortController = AbortController JSVal
+
+newAbortController :: JSM AbortController
+newAbortController = do
+  ctor <- jsg "AbortController"
+  AbortController <$> (new ctor ([] :: [JSVal]))
+
+abort :: AbortController -> JSM ()
+abort (AbortController o) = do
+  _ <- o # "abort" $ ([] :: [JSVal])
+  return ()
 
 
 #ifdef ghcjs_HOST_OS
@@ -123,9 +136,10 @@ unJSString (JSString s) = s
 #endif
 
 
-getFetchArgs :: ClientEnv -> Request -> JSM [JSVal]
+getFetchArgs :: ClientEnv -> Request -> Maybe AbortController -> JSM [JSVal]
 getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
-          (Request reqPath reqQs reqBody reqAccept reqHdrs _reqVer reqMethod) = do
+             (Request reqPath reqQs reqBody reqAccept reqHdrs _reqVer reqMethod)
+             abortController = do
   self <- jsg "self"
   let schemeStr :: Text
       schemeStr = case urlScheme of
@@ -148,6 +162,12 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
     mt' <- toJSVal (decodeUtf8 (renderHeader mt))
     headers <# "Accept" $ mt'
   init <# "headers" $ headers
+  case abortController of
+    Nothing -> return ()
+    Just (AbortController abortController') -> do
+      signal <- abortController' ! "signal"
+      init <# "signal" $ signal
+      return ()
   case reqBody of
     Just (RequestBodyLBS x, mt) -> do
       v <- toJSVal (decodeUtf8 (BL.toStrict x))
@@ -207,10 +227,10 @@ parseChunk chunk = do
     False -> Just <$> (uint8arrayToByteString =<< chunk ! ("value" :: Text))
 
 
-fetch :: Request -> ClientM Response
-fetch req = ClientM . ReaderT $ \env -> do
+fetch :: Maybe AbortController -> Request -> ClientM Response
+fetch abortController req = ClientM . ReaderT $ \env -> do
   self <- liftJSM $ jsg ("self" :: Text)
-  args <- liftJSM $ getFetchArgs env req
+  args <- liftJSM $ getFetchArgs env req abortController
   promise <- liftJSM $ self # ("fetch" :: Text) $ args
   contents <- liftIO $ newTVarIO (mempty :: BS.ByteString)
   result <- liftIO newEmptyMVar
@@ -245,11 +265,11 @@ fetch req = ClientM . ReaderT $ \env -> do
 -- | A variation on @Servant.Client.Core.withStreamingRequest@ where the continuation / callback
 --   passed as the second argument is in the JSM monad as opposed to the IO monad.
 --   Executes the given request and passes the response data stream to the provided continuation / callback.
-withStreamingRequestJSM :: Request -> (StreamingResponse -> JSM a) -> ClientM a
-withStreamingRequestJSM req handler =
+withStreamingRequestJSM :: Maybe AbortController -> Request -> (StreamingResponse -> JSM a) -> ClientM a
+withStreamingRequestJSM abortController req handler =
   ClientM . ReaderT $ \env -> do
     self <- liftJSM $ jsg "self"
-    fetchArgs <- liftJSM $ getFetchArgs env req
+    fetchArgs <- liftJSM $ getFetchArgs env req abortController
     fetchPromise <- liftJSM $ self # "fetch" $ fetchArgs
     push <- liftIO newEmptyMVar
     result <- liftIO newEmptyMVar
