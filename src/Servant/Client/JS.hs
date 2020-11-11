@@ -175,21 +175,24 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
       return ()
   case reqBody of
     Just (RequestBodyLBS x, mt) -> do
-      (buf, _, _) <- ghcjsPure . fromByteString $ BL.toStrict x
-      abuf <- ArrayBuffer.thaw =<< ghcjsPure (getArrayBuffer buf)
-      blob <- new (jsg "Blob") [pToJSVal abuf]
-      init <# "body" $ blob
+      (init <# "body") =<< getBody (BL.toStrict x)
       mt' <- toJSVal (decodeUtf8 (renderHeader mt))
       headers <# "Content-Type" $ mt'
     Just (RequestBodyBS x, mt) -> do
-      v <- toJSVal (decodeUtf8 x)
-      init <# "body" $ v
+      (init <# "body") =<< getBody x
       mt' <- toJSVal (decodeUtf8 (renderHeader mt))
       headers <# "Content-Type" $ mt'
     Just (RequestBodySource _, _) -> error "Servant.Client.JS.withStreamingRequest(JSM) does not (yet) support RequestBodySource"
     Nothing -> return ()
   init' <- toJSVal init
   return [url, init']
+
+
+getBody :: BS.ByteString -> JSM JSVal
+getBody bs = do
+  (buf, _, _) <- ghcjsPure $ fromByteString bs
+  abuf <- ArrayBuffer.thaw =<< ghcjsPure (getArrayBuffer buf)
+  new (jsg "Blob") [pToJSVal abuf]
 
 
 getResponseMeta :: JSVal -> JSM (Status, Seq.Seq Header, HttpVersion)
