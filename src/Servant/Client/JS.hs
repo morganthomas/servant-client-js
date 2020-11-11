@@ -64,7 +64,7 @@ import Language.Javascript.JSaddle (
 #ifndef ghcjs_HOST_OS
   MonadJSM,
 #endif
-  JSM (..), liftJSM, jsg, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
+  JSM (..), liftJSM, jsg, jsval_, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
 import Network.HTTP.Media (renderHeader)
 import Network.HTTP.Types
 import Servant.Client.Core
@@ -174,8 +174,11 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
       return ()
   case reqBody of
     Just (RequestBodyLBS x, mt) -> do
-      v <- toJSVal (decodeUtf8 (BL.toStrict x))
-      init <# "body" $ v
+      (buf, _, _) <- ghcjsPure . fromByteString $ BL.toStrict x
+      abuf <- ghcjsPure $ getArrayBuffer buf
+      abuf' <- ghcjsPure $ jsval_ abuf
+      blob <- new (jsg "Blob") [abuf']
+      init <# "body" $ blob
       mt' <- toJSVal (decodeUtf8 (renderHeader mt))
       headers <# "Content-Type" $ mt'
     Just (RequestBodyBS x, mt) -> do
