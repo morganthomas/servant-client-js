@@ -60,11 +60,12 @@ import Language.Javascript.JSaddle (fromJSString)
 #else
 import "jsaddle" GHCJS.Prim hiding (fromJSString)
 #endif 
+import qualified JavaScript.TypedArray.ArrayBuffer as ArrayBuffer
 import Language.Javascript.JSaddle (
 #ifndef ghcjs_HOST_OS
   MonadJSM,
 #endif
-  JSM (..), liftJSM, jsg, jsval_, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
+  JSM (..), liftJSM, jsg, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
 import Network.HTTP.Media (renderHeader)
 import Network.HTTP.Types
 import Servant.Client.Core
@@ -175,9 +176,8 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
   case reqBody of
     Just (RequestBodyLBS x, mt) -> do
       (buf, _, _) <- ghcjsPure . fromByteString $ BL.toStrict x
-      abuf <- ghcjsPure $ getArrayBuffer buf
-      abuf' <- ghcjsPure $ jsval_ abuf
-      blob <- new (jsg "Blob") [abuf']
+      abuf <- ArrayBuffer.thaw =<< ghcjsPure (getArrayBuffer buf)
+      blob <- new (jsg "Blob") [pToJSVal abuf]
       init <# "body" $ blob
       mt' <- toJSVal (decodeUtf8 (renderHeader mt))
       headers <# "Content-Type" $ mt'
