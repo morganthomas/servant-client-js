@@ -190,9 +190,10 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
 
 getBody :: BS.ByteString -> JSM JSVal
 getBody bs = do
-  (buf, _, _) <- ghcjsPure $ fromByteString bs
+  (buf, _, len) <- ghcjsPure $ fromByteString bs
   abuf <- ArrayBuffer.thaw =<< ghcjsPure (getArrayBuffer buf)
-  new (jsg "Blob") [pToJSVal abuf]
+  blob <- new (jsg "Blob") . (:[]) =<< toJSVal [pToJSVal abuf]
+  blob # "slice" $ [0, len]
 
 
 getResponseMeta :: JSVal -> JSM (Status, Seq.Seq Header, HttpVersion)
