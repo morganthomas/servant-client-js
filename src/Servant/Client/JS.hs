@@ -33,6 +33,7 @@ module Servant.Client.JS
 
 
 import Control.Concurrent
+import Control.Exception
 import Control.Monad (forM_)
 import Control.Monad.Base
 import Control.Monad.Catch
@@ -55,10 +56,10 @@ import GHC.Generics
 import GHCJS.Buffer
 import GHCJS.Marshal.Internal
 #ifdef ghcjs_HOST_OS
-import GHCJS.Prim hiding (getProp, fromJSString)
+import GHCJS.Prim hiding (getProp, fromJSString, JSException)
 import Language.Javascript.JSaddle (fromJSString)
 #else
-import "jsaddle" GHCJS.Prim hiding (fromJSString)
+import "jsaddle" GHCJS.Prim hiding (fromJSString, JSException)
 #endif 
 import qualified JavaScript.TypedArray.ArrayBuffer as ArrayBuffer
 import Language.Javascript.JSaddle (
@@ -66,6 +67,7 @@ import Language.Javascript.JSaddle (
   MonadJSM,
 #endif
   JSM (..), liftJSM, jsg, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
+import Language.Javascript.JSaddle.Exception (JSException (JSException))
 import Network.HTTP.Media (renderHeader)
 import Network.HTTP.Types
 import Servant.Client.Core
@@ -258,7 +260,7 @@ fetch abortController req = ClientM . ReaderT $ \env -> do
               [chunk] -> do
                 next <- parseChunk chunk
                 case next of
-                  Nothing -> liftIO $ putMVar result . (meta,) =<< readTVarIO contents
+                  Nothing -> liftIO $ putMVar result . Right . (meta,) =<< readTVarIO contents
                   Just x -> do
                     liftIO . atomically $ writeTVar contents . (<> x) =<< readTVar contents
                     go
@@ -268,9 +270,18 @@ fetch abortController req = ClientM . ReaderT $ \env -> do
           return ()
         return ()
       _ -> error "fetch promise handler received wrong number of arguments"
+  promiseExceptionHandler <- liftJSM . toJSVal . fun $ \_ _ args ->
+    case args of
+      [jsEx] -> liftIO $ putMVar result (Left jsEx)
+      _ -> error "fetch catch handler received wrong number of arguments"
   liftJSM $ promise # ("then" :: Text) $ [promiseHandler]
-  ((status, hdrs, ver), body) <- liftIO $ takeMVar result
-  return $ Response status hdrs ver (BL.fromStrict body)
+  liftJSM $ promise # ("catch" :: Text) $ [promiseExceptionHandler]
+  result' <- liftIO $ takeMVar result
+  case result' of
+    Right ((status, hdrs, ver), body) ->
+      return $ Response status hdrs ver (BL.fromStrict body)
+    Left jsException ->
+      throwError . ConnectionError . SomeException $ JSException jsException
 
 
 -- | A variation on @Servant.Client.Core.withStreamingRequest@ where the continuation / callback
