@@ -321,7 +321,16 @@ withStreamingRequestJSM abortController req handler =
                 case next of
                   Nothing -> return S.Stop
                   Just x -> return $ S.Yield x (S.Effect go)
-          liftIO . putMVar result . Response status hdrs ver $ S.SourceT @IO out
+          liftIO . putMVar result . Right . Response status hdrs ver $ S.SourceT @IO out
         _ -> error "wrong number of arguments to Promise.then() callback"
+    promiseExceptionHandler <- liftJSM . toJSVal . fun $ \_ _ args ->
+      case args of
+        [jsEx] -> liftIO . putMVar result $ Left jsEx
+        _ -> error "fetch catch handler in withStreamingRequestJSM received wrong number of arguments"
     liftJSM $ fetchPromise # "then" $ [fetchPromiseHandler]
-    liftJSM . handler =<< liftIO (takeMVar result)
+    liftJSM $ fetchPromise # "catch" $ [promiseExceptionHandler]
+    result' <- liftIO $ takeMVar result
+    case result' of
+      Right x -> liftJSM $ handler x
+      Left jsException ->
+        throwError . ConnectionError . SomeException $ JSException jsException
