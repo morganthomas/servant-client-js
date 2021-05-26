@@ -33,9 +33,10 @@ module Servant.Client.JS
 
 
 import Control.Concurrent
+import Control.Exception hiding (catch)
 import Control.Monad (forM_)
 import Control.Monad.Base
-import Control.Monad.Catch
+import Control.Monad.Catch hiding (catch)
 import Control.Monad.Error.Class
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
@@ -55,17 +56,18 @@ import GHC.Generics
 import GHCJS.Buffer
 import GHCJS.Marshal.Internal
 #ifdef ghcjs_HOST_OS
-import GHCJS.Prim hiding (getProp, fromJSString)
+import GHCJS.Prim hiding (getProp, fromJSString, JSException)
 import Language.Javascript.JSaddle (fromJSString)
 #else
-import "jsaddle" GHCJS.Prim hiding (fromJSString)
+import "jsaddle" GHCJS.Prim hiding (fromJSString, JSException)
 #endif 
 import qualified JavaScript.TypedArray.ArrayBuffer as ArrayBuffer
 import Language.Javascript.JSaddle (
 #ifndef ghcjs_HOST_OS
   MonadJSM,
 #endif
-  JSM (..), liftJSM, jsg, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
+  catch, JSM (..), liftJSM, jsg, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
+import Language.Javascript.JSaddle.Exception (JSException (JSException))
 import Network.HTTP.Media (renderHeader)
 import Network.HTTP.Types
 import Servant.Client.Core
@@ -242,9 +244,11 @@ fetch :: Maybe AbortController -> Request -> ClientM Response
 fetch abortController req = ClientM . ReaderT $ \env -> do
   self <- liftJSM $ jsg ("self" :: Text)
   args <- liftJSM $ getFetchArgs env req abortController
-  promise <- liftJSM $ self # ("fetch" :: Text) $ args
-  contents <- liftIO $ newTVarIO (mempty :: BS.ByteString)
   result <- liftIO newEmptyMVar
+  promise <- liftJSM $
+    catch (self # ("fetch" :: Text) $ args)
+          (\(JSException jsEx) -> jsNull <$ (liftIO . putMVar result $ Left jsEx))
+  contents <- liftIO $ newTVarIO (mempty :: BS.ByteString)
   promiseHandler <- liftJSM . toJSVal . fun $ \_ _ args -> do
     case args of
       [res] -> do
@@ -258,7 +262,7 @@ fetch abortController req = ClientM . ReaderT $ \env -> do
               [chunk] -> do
                 next <- parseChunk chunk
                 case next of
-                  Nothing -> liftIO $ putMVar result . (meta,) =<< readTVarIO contents
+                  Nothing -> liftIO $ putMVar result . Right . (meta,) =<< readTVarIO contents
                   Just x -> do
                     liftIO . atomically $ writeTVar contents . (<> x) =<< readTVar contents
                     go
@@ -268,9 +272,18 @@ fetch abortController req = ClientM . ReaderT $ \env -> do
           return ()
         return ()
       _ -> error "fetch promise handler received wrong number of arguments"
-  liftJSM $ promise # ("then" :: Text) $ [promiseHandler]
-  ((status, hdrs, ver), body) <- liftIO $ takeMVar result
-  return $ Response status hdrs ver (BL.fromStrict body)
+  promiseExceptionHandler <- liftJSM . toJSVal . fun $ \_ _ args ->
+    case args of
+      [jsEx] -> liftIO $ putMVar result (Left jsEx)
+      _ -> error "fetch catch handler received wrong number of arguments"
+  liftJSM $ (promise # ("then" :: Text) $ [promiseHandler])
+        >>= (\p -> p # ("catch" :: Text) $ [promiseExceptionHandler])
+  result' <- liftIO $ takeMVar result
+  case result' of
+    Right ((status, hdrs, ver), body) ->
+      return $ Response status hdrs ver (BL.fromStrict body)
+    Left jsException ->
+      throwError . ConnectionError . SomeException $ JSException jsException
 
 
 -- | A variation on @Servant.Client.Core.withStreamingRequest@ where the continuation / callback
@@ -280,37 +293,62 @@ withStreamingRequestJSM :: Maybe AbortController -> Request -> (StreamingRespons
 withStreamingRequestJSM abortController req handler =
   ClientM . ReaderT $ \env -> do
     self <- liftJSM $ jsg "self"
-    fetchArgs <- liftJSM $ getFetchArgs env req abortController
-    fetchPromise <- liftJSM $ self # "fetch" $ fetchArgs
-    push <- liftIO newEmptyMVar
+    console <- liftJSM $ jsg "console"
     result <- liftIO newEmptyMVar
+    fetchArgs <- liftJSM $ getFetchArgs env req abortController
+    fetchPromise <- liftJSM $
+      catch (self # "fetch" $ fetchArgs)
+            (\(JSException jsEx) -> jsNull <$ (liftIO . putMVar result $ Left jsEx))
+    push <- liftIO newEmptyMVar
     fetchPromiseHandler <- liftJSM . toJSVal . fun $ \_ _ args ->
       case args of
         [res] -> do
           (status, hdrs, ver) <- getResponseMeta res
           stream <- res ! ("body" :: Text)
           rdr <- stream # ("getReader" :: Text) $ ([] :: [JSVal])
-          _ <- fix $ \go -> do
-            rdrPromise <- rdr # ("read" :: Text) $ ([] :: [JSVal])
-            rdrHandler <- toJSVal . fun $ \_ _ args ->
-              case args of
-                [chunk] -> do
-                  next <- parseChunk chunk
-                  case next of
-                    Just bs -> do
-                      liftIO $ putMVar push (Just bs)
-                      go
-                    Nothing -> liftIO $ putMVar push Nothing
-                _ -> error "wrong number of arguments to rdrHandler"
-            _ <- rdrPromise # ("then" :: Text) $ [rdrHandler]
-            return ()
+          _ <- catch 
+            (fix $ \go -> do
+              rdrPromise <- rdr # ("read" :: Text) $ ([] :: [JSVal])
+              rdrHandler <- toJSVal . fun $ \_ _ args ->
+                case args of
+                  [chunk] -> do
+                    next <- parseChunk chunk
+                    case next of
+                      Just bs -> do
+                        liftIO $ putMVar push (Just bs)
+                        go
+                      Nothing -> liftIO $ putMVar push Nothing
+                  _ -> error "wrong number of arguments to rdrHandler"
+              rdrExHandler <- toJSVal . fun $ \_ _ args ->
+                case args of
+                  [jsEx] -> do
+                    console # ("log" :: Text) $ [jsEx]
+                    liftIO $ putMVar push Nothing
+                  _ -> error "wrong number of arguments to rdrExHandler"
+              _ <- (rdrPromise # ("then" :: Text) $ [rdrHandler])
+               >>= (\p -> p # ("catch" :: Text) $ [rdrExHandler])
+              return ()
+            )
+            (\(JSException jsEx) -> do
+              console # ("log" :: Text) $ [jsEx]
+              liftIO $ putMVar push Nothing
+            )
           let out :: forall b. (S.StepT IO BS.ByteString -> IO b) -> IO b 
               out handler' = handler' .  S.Effect . fix $ \go -> do
                 next <- takeMVar push
                 case next of
                   Nothing -> return S.Stop
                   Just x -> return $ S.Yield x (S.Effect go)
-          liftIO . putMVar result . Response status hdrs ver $ S.SourceT @IO out
+          liftIO . putMVar result . Right . Response status hdrs ver $ S.SourceT @IO out
         _ -> error "wrong number of arguments to Promise.then() callback"
-    liftJSM $ fetchPromise # "then" $ [fetchPromiseHandler]
-    liftJSM . handler =<< liftIO (takeMVar result)
+    promiseExceptionHandler <- liftJSM . toJSVal . fun $ \_ _ args ->
+      case args of
+        [jsEx] -> liftIO . putMVar result $ Left jsEx
+        _ -> error "fetch catch handler in withStreamingRequestJSM received wrong number of arguments"
+    liftJSM $ (fetchPromise # "then" $ [fetchPromiseHandler])
+          >>= (\p -> p # "catch" $ [promiseExceptionHandler])
+    result' <- liftIO $ takeMVar result
+    case result' of
+      Right x -> liftJSM $ handler x
+      Left jsException ->
+        throwError . ConnectionError . SomeException $ JSException jsException
