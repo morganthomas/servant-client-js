@@ -33,10 +33,10 @@ module Servant.Client.JS
 
 
 import Control.Concurrent
-import Control.Exception
+import Control.Exception hiding (catch)
 import Control.Monad (forM_)
 import Control.Monad.Base
-import Control.Monad.Catch
+import Control.Monad.Catch hiding (catch)
 import Control.Monad.Error.Class
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
@@ -66,7 +66,7 @@ import Language.Javascript.JSaddle (
 #ifndef ghcjs_HOST_OS
   MonadJSM,
 #endif
-  JSM (..), liftJSM, jsg, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
+  catch, JSM (..), liftJSM, jsg, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
 import Language.Javascript.JSaddle.Exception (JSException (JSException))
 import Network.HTTP.Media (renderHeader)
 import Network.HTTP.Types
@@ -244,9 +244,11 @@ fetch :: Maybe AbortController -> Request -> ClientM Response
 fetch abortController req = ClientM . ReaderT $ \env -> do
   self <- liftJSM $ jsg ("self" :: Text)
   args <- liftJSM $ getFetchArgs env req abortController
-  promise <- liftJSM $ self # ("fetch" :: Text) $ args
-  contents <- liftIO $ newTVarIO (mempty :: BS.ByteString)
   result <- liftIO newEmptyMVar
+  promise <- liftJSM $
+    catch (self # ("fetch" :: Text) $ args)
+          (\(JSException jsEx) -> jsNull <$ (liftIO . putMVar result $ Left jsEx))
+  contents <- liftIO $ newTVarIO (mempty :: BS.ByteString)
   promiseHandler <- liftJSM . toJSVal . fun $ \_ _ args -> do
     case args of
       [res] -> do
@@ -291,10 +293,12 @@ withStreamingRequestJSM :: Maybe AbortController -> Request -> (StreamingRespons
 withStreamingRequestJSM abortController req handler =
   ClientM . ReaderT $ \env -> do
     self <- liftJSM $ jsg "self"
-    fetchArgs <- liftJSM $ getFetchArgs env req abortController
-    fetchPromise <- liftJSM $ self # "fetch" $ fetchArgs
-    push <- liftIO newEmptyMVar
     result <- liftIO newEmptyMVar
+    fetchArgs <- liftJSM $ getFetchArgs env req abortController
+    fetchPromise <- liftJSM $
+      catch (self # "fetch" $ fetchArgs)
+            (\(JSException jsEx) -> jsNull <$ (liftIO . putMVar result $ Left jsEx))
+    push <- liftIO newEmptyMVar
     fetchPromiseHandler <- liftJSM . toJSVal . fun $ \_ _ args ->
       case args of
         [res] -> do
