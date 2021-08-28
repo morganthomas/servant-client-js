@@ -30,6 +30,16 @@ let
   ];
 
 
+  easy-hls = pkgs.callPackage (pkgs.fetchFromGitHub {
+    owner  = "jkachmar";
+    repo   = "easy-hls-nix";
+    rev    = "db85cac9d0405b4769b75cba0b004aed3beaf2de";
+    sha256 = "10nff6mqflrd6dz1fp2l9vmfwbgk0r7zm81qh2xnjj19a47pd7v3";
+  }) {
+    ghcVersions = [ "8.6.5" ];
+  };
+
+
   # Get some utilities
   inherit (import (shpadoinkle + "/nix/util.nix") { inherit compiler isJS; }) compilerjs gitignore;
 
@@ -89,7 +99,7 @@ in with pkgs; with lib; with haskell.packages.${compiler};
     inherit withHoogle;
     packages = _: [servant-client-js];
     COMPILER = compilerjs;
-    buildInputs = [ stylish-haskell cabal-install ghcid haddock ];
+    buildInputs = [ easy-hls stylish-haskell cabal-install ghcid haddock ];
     shellHook = ''
       ${lolcat}/bin/lolcat ${./figlet}
     '';

@@ -9,8 +9,8 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeSynonymInstances       #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE ViewPatterns               #-}
@@ -32,47 +32,68 @@ module Servant.Client.JS
   ) where
 
 
-import Control.Concurrent
-import Control.Exception hiding (catch)
-import Control.Monad (forM_)
-import Control.Monad.Base
-import Control.Monad.Catch hiding (catch)
-import Control.Monad.Error.Class
-import Control.Monad.Reader
-import Control.Monad.Trans.Control
-import Control.Monad.Trans.Except
-import Data.Binary.Builder (toLazyByteString)
-import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy as BL
-import Data.CaseInsensitive
-import Data.Maybe (fromMaybe)
-import Data.Proxy
-import Data.Functor.Alt
-import qualified Data.Sequence as Seq
-import Data.Text
-import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import GHC.Conc
-import GHC.Generics
-import GHCJS.Buffer
-import GHCJS.Marshal.Internal
+import           Control.Concurrent                    (newEmptyMVar, putMVar,
+                                                        takeMVar)
+import           Control.Exception                     hiding (catch)
+import           Control.Monad                         (forM, forM_)
+import           Control.Monad.Base                    (MonadBase (..))
+import           Control.Monad.Catch                   hiding (catch)
+import           Control.Monad.Error.Class             (MonadError (..))
+import           Control.Monad.Reader                  (MonadIO (..),
+                                                        MonadReader,
+                                                        ReaderT (..), fix)
+import           Control.Monad.Trans.Control           (MonadBaseControl (..))
+import           Control.Monad.Trans.Except            (ExceptT (..),
+                                                        runExceptT)
+import           Data.Binary.Builder                   (toLazyByteString)
+import qualified Data.ByteString.Char8                 as BS
+import qualified Data.ByteString.Lazy                  as BL
+import           Data.CaseInsensitive                  (mk, original)
+import           Data.Functor.Alt                      (Alt (..))
+import           Data.Maybe                            (fromMaybe)
+import           Data.Proxy                            (Proxy (Proxy))
+import qualified Data.Sequence                         as Seq
+import           Data.Text                             (Text, intercalate, pack)
+import           Data.Text.Encoding                    (decodeUtf8, encodeUtf8)
+import           GHC.Conc                              (atomically, newTVarIO,
+                                                        readTVar, readTVarIO,
+                                                        writeTVar)
+import           GHC.Generics                          (Generic)
+import           GHCJS.Buffer                          (byteLength,
+                                                        createFromArrayBuffer,
+                                                        freeze, fromByteString,
+                                                        getArrayBuffer,
+                                                        toByteString)
+import           GHCJS.Marshal.Internal                (pFromJSVal, pToJSVal)
 #ifdef ghcjs_HOST_OS
-import GHCJS.Prim hiding (getProp, fromJSString, JSException)
-import Language.Javascript.JSaddle (fromJSString)
+import           GHCJS.Prim                            hiding (JSException,
+                                                        fromJSString, getProp)
+import           Language.Javascript.JSaddle           (fromJSString)
 #else
-import "jsaddle" GHCJS.Prim hiding (fromJSString, JSException)
-#endif 
-import qualified JavaScript.TypedArray.ArrayBuffer as ArrayBuffer
-import Language.Javascript.JSaddle (
-#ifndef ghcjs_HOST_OS
-  MonadJSM,
+import           "jsaddle" GHCJS.Prim                  hiding (JSException,
+                                                        fromJSString)
 #endif
-  catch, JSM (..), liftJSM, jsg, toJSVal, obj, new, (#), (<#), fun, fromJSVal, (!), JSString (..), makeObject, isTruthy, ghcjsPure )
-import Language.Javascript.JSaddle.Exception (JSException (JSException))
-import Network.HTTP.Media (renderHeader)
-import Network.HTTP.Types
-import Servant.Client.Core
-import Servant.Client.Core.Reexport
-import qualified Servant.Types.SourceT as S
+import qualified JavaScript.TypedArray.ArrayBuffer     as ArrayBuffer
+import           Language.Javascript.JSaddle           (JSM (..), JSString (..),
+                                                        MonadJSM, catch,
+                                                        fromJSVal, fun,
+                                                        ghcjsPure, isTruthy,
+                                                        jsg, liftJSM,
+                                                        makeObject, new, obj,
+                                                        toJSVal, (!), (#), (<#))
+import           Language.Javascript.JSaddle.Exception (JSException (JSException))
+import           Network.HTTP.Media                    (renderHeader)
+import           Network.HTTP.Types                    (Header, HttpVersion,
+                                                        Status, http11)
+import           Servant.Client.Core                   (Request,
+                                                        RequestBody (RequestBodyBS, RequestBodyLBS, RequestBodySource),
+                                                        RequestF (Request),
+                                                        ResponseF (Response),
+                                                        RunClient (..),
+                                                        RunStreamingClient (..),
+                                                        clientIn)
+import           Servant.Client.Core.Reexport
+import qualified Servant.Types.SourceT                 as S
 
 default (Text)
 
@@ -150,11 +171,11 @@ getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
   self <- jsg "self"
   let schemeStr :: Text
       schemeStr = case urlScheme of
-                    Http -> "http://"
+                    Http  -> "http://"
                     Https -> "https://"
   url <- toJSVal $ schemeStr <> pack host <> ":" <> pack (show port) <> pack basePath
                              <> decodeUtf8 (BL.toStrict (toLazyByteString reqPath))
-                             <> (if Prelude.null reqQs then "" else "?" ) <> (intercalate "&" 
+                             <> (if Prelude.null reqQs then "" else "?" ) <> (intercalate "&"
                                         $ (\(k,v) -> decodeUtf8 k <> "="
                                                            <> maybe "" decodeUtf8 v)
                                          <$> Prelude.foldr (:) [] reqQs)
@@ -213,11 +234,11 @@ getResponseMeta res = do
              rest <- go names
              v <- fromJSVal =<< x ! "value"
              case v of
-               Just k -> return (k : rest)
+               Just k  -> return (k : rest)
                Nothing -> return rest)
   resHeaders <- fmap (Prelude.foldr (Seq.:<|) Seq.Empty)
              .  forM resHeaderNames $ \headerName -> do
-    headerValue <- fmap (fromMaybe "") . fromJSVal 
+    headerValue <- fmap (fromMaybe "") . fromJSVal
                    =<< (resHeadersObj # ("get" :: Text) $ [headerName])
     return (mk (encodeUtf8 (unJSString headerName)), encodeUtf8 headerValue)
   return (status, resHeaders, http11) -- http11 is made up
@@ -236,7 +257,7 @@ parseChunk chunk = do
   isDone <- ghcjsPure =<< isTruthy
               <$> (chunk ! ("done" :: Text))
   case isDone of
-    True -> return Nothing
+    True  -> return Nothing
     False -> Just <$> (uint8arrayToByteString =<< chunk ! ("value" :: Text))
 
 
@@ -275,7 +296,7 @@ fetch abortController req = ClientM . ReaderT $ \env -> do
   promiseExceptionHandler <- liftJSM . toJSVal . fun $ \_ _ args ->
     case args of
       [jsEx] -> liftIO $ putMVar result (Left jsEx)
-      _ -> error "fetch catch handler received wrong number of arguments"
+      _      -> error "fetch catch handler received wrong number of arguments"
   liftJSM $ (promise # ("then" :: Text) $ [promiseHandler])
         >>= (\p -> p # ("catch" :: Text) $ [promiseExceptionHandler])
   result' <- liftIO $ takeMVar result
@@ -306,7 +327,7 @@ withStreamingRequestJSM abortController req handler =
           (status, hdrs, ver) <- getResponseMeta res
           stream <- res ! ("body" :: Text)
           rdr <- stream # ("getReader" :: Text) $ ([] :: [JSVal])
-          _ <- catch 
+          _ <- catch
             (fix $ \go -> do
               rdrPromise <- rdr # ("read" :: Text) $ ([] :: [JSVal])
               rdrHandler <- toJSVal . fun $ \_ _ args ->
@@ -333,12 +354,12 @@ withStreamingRequestJSM abortController req handler =
               console # ("log" :: Text) $ [jsEx]
               liftIO $ putMVar push Nothing
             )
-          let out :: forall b. (S.StepT IO BS.ByteString -> IO b) -> IO b 
+          let out :: forall b. (S.StepT IO BS.ByteString -> IO b) -> IO b
               out handler' = handler' .  S.Effect . fix $ \go -> do
                 next <- takeMVar push
                 case next of
                   Nothing -> return S.Stop
-                  Just x -> return $ S.Yield x (S.Effect go)
+                  Just x  -> return $ S.Yield x (S.Effect go)
           liftIO . putMVar result . Right . Response status hdrs ver $ S.SourceT @IO out
         _ -> error "wrong number of arguments to Promise.then() callback"
     promiseExceptionHandler <- liftJSM . toJSVal . fun $ \_ _ args ->
