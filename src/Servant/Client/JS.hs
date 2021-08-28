@@ -101,6 +101,7 @@ default (Text)
 newtype ClientEnv = ClientEnv { baseUrl :: BaseUrl }
   deriving (Eq, Show)
 
+
 newtype ClientM a = ClientM
   { runClientM' :: ReaderT ClientEnv (ExceptT ClientError JSM) a }
   deriving ( Functor, Applicative, Monad, MonadIO
@@ -303,7 +304,10 @@ fetch abortController req = ClientM . ReaderT $ \env -> do
   case result' of
     Right ((status, hdrs, ver), body) ->
       return $ Response status hdrs ver (BL.fromStrict body)
-    Left jsException ->
+    Left jsException -> do
+      liftJSM $ do
+        console <- liftJSM $ jsg "console"
+        console # ("log" :: Text) $ [jsException]
       throwError . ConnectionError . SomeException $ JSException jsException
 
 
@@ -371,5 +375,8 @@ withStreamingRequestJSM abortController req handler =
     result' <- liftIO $ takeMVar result
     case result' of
       Right x -> liftJSM $ handler x
-      Left jsException ->
+      Left jsException -> do
+        liftJSM $ do
+          console <- liftJSM $ jsg "console"
+          console # ("log" :: Text) $ [jsException]
         throwError . ConnectionError . SomeException $ JSException jsException
