@@ -61,8 +61,7 @@ import           GHC.Conc                              (atomically, newTVarIO,
                                                         readTVar, readTVarIO,
                                                         writeTVar)
 import           GHC.Generics                          (Generic)
-import           GHCJS.Buffer                          (byteLength,
-                                                        createFromArrayBuffer,
+import           GHCJS.Buffer                          (createFromArrayBuffer,
                                                         freeze, fromByteString,
                                                         getArrayBuffer,
                                                         toByteString)
@@ -78,7 +77,7 @@ import           "jsaddle" GHCJS.Prim                  hiding (JSException,
 import qualified JavaScript.TypedArray.ArrayBuffer     as ArrayBuffer
 import           Language.Javascript.JSaddle           (JSM (..), JSString (..),
                                                         MonadJSM, catch,
-                                                        fromJSVal, fun,
+                                                        fromJSVal, fromJSValUnchecked, fun,
                                                         ghcjsPure, isTruthy,
                                                         jsg, liftJSM,
                                                         makeObject, new, obj,
@@ -267,8 +266,9 @@ uint8arrayToByteString :: JSVal -> JSM BS.ByteString
 uint8arrayToByteString val = do
   abuf <- val ! "buffer"
   buf  <- ghcjsPure (createFromArrayBuffer (pFromJSVal abuf)) >>= freeze
-  len  <- ghcjsPure (byteLength buf)
-  ghcjsPure $ toByteString 0 (Just len) buf
+  len  <- fromJSValUnchecked =<< val ! "byteLength"
+  off  <- fromJSValUnchecked =<< val ! "byteOffset"
+  ghcjsPure $ toByteString off (Just len) buf
 
 
 parseChunk :: JSVal -> JSM (Maybe BS.ByteString)
