@@ -32,16 +32,18 @@ module Servant.Client.JS
   ) where
 
 
+import           Data.Bifunctor                        (bimap)
+import           Data.Function                         (fix)
 import           Control.Concurrent                    (newEmptyMVar, putMVar,
                                                         takeMVar)
 import           Control.Exception                     hiding (catch)
-import           Control.Monad                         (forM, forM_)
+import           Control.Monad                         (forM, forM_, unless)
 import           Control.Monad.Base                    (MonadBase (..))
 import           Control.Monad.Catch                   hiding (catch)
 import           Control.Monad.Error.Class             (MonadError (..))
 import           Control.Monad.Reader                  (MonadIO (..),
-                                                        MonadReader,
-                                                        ReaderT (..), fix)
+                                                        MonadReader (..),
+                                                        ReaderT (..))
 import           Control.Monad.Trans.Control           (MonadBaseControl (..))
 import           Control.Monad.Trans.Except            (ExceptT (..),
                                                         runExceptT)
@@ -59,36 +61,26 @@ import           GHC.Conc                              (atomically, newTVarIO,
                                                         readTVar, readTVarIO,
                                                         writeTVar)
 import           GHC.Generics                          (Generic)
-import           GHCJS.Buffer                          (byteLength,
-                                                        createFromArrayBuffer,
+import           GHCJS.Buffer                          (createFromArrayBuffer,
                                                         freeze, fromByteString,
                                                         getArrayBuffer,
                                                         toByteString)
 import           GHCJS.Marshal.Internal                (pFromJSVal, pToJSVal)
-#ifdef ghcjs_HOST_OS
-import           GHCJS.Prim                            hiding (JSException,
-                                                        fromJSString, getProp)
-import           Language.Javascript.JSaddle           (fromJSString)
-#else
-import           "jsaddle" GHCJS.Prim                  hiding (JSException,
-                                                        fromJSString)
-#endif
 import qualified JavaScript.TypedArray.ArrayBuffer     as ArrayBuffer
-import           Language.Javascript.JSaddle           (JSM (..), JSString (..),
+import           Language.Javascript.JSaddle           (JSM (..), JSVal,
                                                         MonadJSM, catch,
-                                                        fromJSVal, fun,
+                                                        fromJSVal, fromJSValUnchecked, fun,
                                                         ghcjsPure, isTruthy,
-                                                        jsg, liftJSM,
-                                                        makeObject, new, obj,
+                                                        jsNull, jsg, liftJSM,
+                                                        makeObject, new, obj, strToText,
                                                         toJSVal, (!), (#), (<#))
 import           Language.Javascript.JSaddle.Exception (JSException (JSException))
 import           Network.HTTP.Media                    (renderHeader)
 import           Network.HTTP.Types                    (Header, HttpVersion,
-                                                        Status, http11)
+                                                        Status, http11, statusIsSuccessful)
 import           Servant.Client.Core                   (Request,
                                                         RequestBody (RequestBodyBS, RequestBodyLBS, RequestBodySource),
                                                         RequestF (Request),
-                                                        ResponseF (Response),
                                                         RunClient (..),
                                                         RunStreamingClient (..),
                                                         clientIn)
@@ -136,7 +128,24 @@ instance Alt ClientM where
   a <!> b = a `catchError` const b
 
 instance RunClient ClientM where
+#if MIN_VERSION_servant_client_core(0,18,1)
+  runRequestAcceptStatus mGoodStatuses req = do
+    res <- fetch Nothing req
+    unless (isGoodStatus $ responseStatusCode res) $
+      throwGenericError res
+    pure res
+    where
+      isGoodStatus = case mGoodStatuses of
+        Nothing -> statusIsSuccessful
+        Just goodStatuses -> (`elem` goodStatuses)
+
+      throwGenericError res = do
+        ClientEnv burl <- ask
+        let req' = bimap (const ()) ((burl,) . BL.toStrict . toLazyByteString) req
+        throwError $ FailureResponse req' res
+#else
   runRequest = fetch Nothing
+#endif
   throwClientError = throwError
 
 instance RunStreamingClient ClientM where
@@ -154,15 +163,6 @@ abort :: AbortController -> JSM ()
 abort (AbortController o) = do
   _ <- o # "abort" $ ([] :: [JSVal])
   return ()
-
-
-#ifdef ghcjs_HOST_OS
-unJSString :: JSString -> Text
-unJSString = fromJSString
-#else
-unJSString :: JSString -> Text
-unJSString (JSString s) = s
-#endif
 
 
 getFetchArgs :: ClientEnv -> Request -> Maybe AbortController -> JSM [JSVal]
@@ -241,7 +241,7 @@ getResponseMeta res = do
              .  forM resHeaderNames $ \headerName -> do
     headerValue <- fmap (fromMaybe "") . fromJSVal
                    =<< (resHeadersObj # ("get" :: Text) $ [headerName])
-    return (mk (encodeUtf8 (unJSString headerName)), encodeUtf8 headerValue)
+    return (mk (encodeUtf8 (strToText headerName)), encodeUtf8 headerValue)
   return (status, resHeaders, http11) -- http11 is made up
 
 
@@ -249,8 +249,9 @@ uint8arrayToByteString :: JSVal -> JSM BS.ByteString
 uint8arrayToByteString val = do
   abuf <- val ! "buffer"
   buf  <- ghcjsPure (createFromArrayBuffer (pFromJSVal abuf)) >>= freeze
-  len  <- ghcjsPure (byteLength buf)
-  ghcjsPure $ toByteString 0 (Just len) buf
+  len  <- fromJSValUnchecked =<< val ! "byteLength"
+  off  <- fromJSValUnchecked =<< val ! "byteOffset"
+  ghcjsPure $ toByteString off (Just len) buf
 
 
 parseChunk :: JSVal -> JSM (Maybe BS.ByteString)
