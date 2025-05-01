@@ -32,16 +32,18 @@ module Servant.Client.JS
   ) where
 
 
+import           Data.Bifunctor                        (bimap)
+import           Data.Function                         (fix)
 import           Control.Concurrent                    (newEmptyMVar, putMVar,
                                                         takeMVar)
 import           Control.Exception                     hiding (catch)
-import           Control.Monad                         (forM, forM_)
+import           Control.Monad                         (forM, forM_, unless)
 import           Control.Monad.Base                    (MonadBase (..))
 import           Control.Monad.Catch                   hiding (catch)
 import           Control.Monad.Error.Class             (MonadError (..))
 import           Control.Monad.Reader                  (MonadIO (..),
-                                                        MonadReader,
-                                                        ReaderT (..), fix)
+                                                        MonadReader (..),
+                                                        ReaderT (..))
 import           Control.Monad.Trans.Control           (MonadBaseControl (..))
 import           Control.Monad.Trans.Except            (ExceptT (..),
                                                         runExceptT)
@@ -84,11 +86,10 @@ import           Language.Javascript.JSaddle           (JSM (..), JSString (..),
 import           Language.Javascript.JSaddle.Exception (JSException (JSException))
 import           Network.HTTP.Media                    (renderHeader)
 import           Network.HTTP.Types                    (Header, HttpVersion,
-                                                        Status, http11)
+                                                        Status, http11, statusIsSuccessful)
 import           Servant.Client.Core                   (Request,
                                                         RequestBody (RequestBodyBS, RequestBodyLBS, RequestBodySource),
                                                         RequestF (Request),
-                                                        ResponseF (Response),
                                                         RunClient (..),
                                                         RunStreamingClient (..),
                                                         clientIn)
@@ -136,7 +137,24 @@ instance Alt ClientM where
   a <!> b = a `catchError` const b
 
 instance RunClient ClientM where
+#if MIN_VERSION_servant_client_core(0,18,1)
+  runRequestAcceptStatus mGoodStatuses req = do
+    res <- fetch Nothing req
+    unless (isGoodStatus $ responseStatusCode res) $
+      throwGenericError res
+    pure res
+    where
+      isGoodStatus = case mGoodStatuses of
+        Nothing -> statusIsSuccessful
+        Just goodStatuses -> (`elem` goodStatuses)
+
+      throwGenericError res = do
+        ClientEnv burl <- ask
+        let req' = bimap (const ()) ((burl,) . BL.toStrict . toLazyByteString) req
+        throwError $ FailureResponse req' res
+#else
   runRequest = fetch Nothing
+#endif
   throwClientError = throwError
 
 instance RunStreamingClient ClientM where
