@@ -66,21 +66,13 @@ import           GHCJS.Buffer                          (createFromArrayBuffer,
                                                         getArrayBuffer,
                                                         toByteString)
 import           GHCJS.Marshal.Internal                (pFromJSVal, pToJSVal)
-#ifdef ghcjs_HOST_OS
-import           GHCJS.Prim                            hiding (JSException,
-                                                        fromJSString, getProp)
-import           Language.Javascript.JSaddle           (fromJSString)
-#else
-import           "jsaddle" GHCJS.Prim                  hiding (JSException,
-                                                        fromJSString)
-#endif
 import qualified JavaScript.TypedArray.ArrayBuffer     as ArrayBuffer
-import           Language.Javascript.JSaddle           (JSM (..), JSString (..),
+import           Language.Javascript.JSaddle           (JSM (..), JSVal,
                                                         MonadJSM, catch,
                                                         fromJSVal, fromJSValUnchecked, fun,
                                                         ghcjsPure, isTruthy,
-                                                        jsg, liftJSM,
-                                                        makeObject, new, obj,
+                                                        jsNull, jsg, liftJSM,
+                                                        makeObject, new, obj, strToText,
                                                         toJSVal, (!), (#), (<#))
 import           Language.Javascript.JSaddle.Exception (JSException (JSException))
 import           Network.HTTP.Media                    (renderHeader)
@@ -173,15 +165,6 @@ abort (AbortController o) = do
   return ()
 
 
-#ifdef ghcjs_HOST_OS
-unJSString :: JSString -> Text
-unJSString = fromJSString
-#else
-unJSString :: JSString -> Text
-unJSString (JSString s) = s
-#endif
-
-
 getFetchArgs :: ClientEnv -> Request -> Maybe AbortController -> JSM [JSVal]
 getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
              (Request reqPath reqQs reqBody reqAccept reqHdrs _reqVer reqMethod)
@@ -258,7 +241,7 @@ getResponseMeta res = do
              .  forM resHeaderNames $ \headerName -> do
     headerValue <- fmap (fromMaybe "") . fromJSVal
                    =<< (resHeadersObj # ("get" :: Text) $ [headerName])
-    return (mk (encodeUtf8 (unJSString headerName)), encodeUtf8 headerValue)
+    return (mk (encodeUtf8 (strToText headerName)), encodeUtf8 headerValue)
   return (status, resHeaders, http11) -- http11 is made up
 
 
