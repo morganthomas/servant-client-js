@@ -166,15 +166,11 @@ abort (AbortController o) = do
 
 
 getFetchArgs :: ClientEnv -> Request -> Maybe AbortController -> JSM [JSVal]
-getFetchArgs (ClientEnv (BaseUrl urlScheme host port basePath))
+getFetchArgs (ClientEnv baseUrl)
              (Request reqPath reqQs reqBody reqAccept reqHdrs _reqVer reqMethod)
              abortController = do
   self <- jsg "self"
-  let schemeStr :: Text
-      schemeStr = case urlScheme of
-                    Http  -> "http://"
-                    Https -> "https://"
-  url <- toJSVal $ schemeStr <> pack host <> ":" <> pack (show port) <> pack basePath
+  url <- toJSVal $ pack (showBaseUrl baseUrl)
                              <> decodeUtf8 (BL.toStrict (toLazyByteString reqPath))
                              <> (if Prelude.null reqQs then "" else "?" ) <> (intercalate "&"
                                         $ (\(k,v) -> decodeUtf8 k <> "="
